@@ -109,8 +109,10 @@ int mfill_atomic_install_pte(struct mm_struct *dst_mm, pmd_t *dst_pmd,
 	 * We allow to overwrite a pte marker: consider when both MISSING|WP
 	 * registered, we firstly wr-protect a none pte which has no page cache
 	 * page backing it, then access the page.
+	 * We also allow overwriting UPF-stamped PTEs (bit 58, P=0): they are
+	 * non-present placeholders that must be replaced by a real page.
 	 */
-	if (!pte_none_mostly(*dst_pte))
+	if (!pte_none_mostly(*dst_pte) && !pte_upf(*dst_pte))
 		goto out_unlock;
 
 	if (page_in_cache) {
@@ -223,7 +225,7 @@ static int mfill_zeropage_pte(struct mm_struct *dst_mm,
 			goto out_unlock;
 	}
 	ret = -EEXIST;
-	if (!pte_none(*dst_pte))
+	if (!pte_none(*dst_pte) && !pte_upf(*dst_pte))
 		goto out_unlock;
 	set_pte_at(dst_mm, dst_addr, dst_pte, _dst_pte);
 	/* No need to invalidate - it was non-present before */

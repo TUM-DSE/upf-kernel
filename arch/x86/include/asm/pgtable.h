@@ -736,6 +736,16 @@ static inline int pte_present(pte_t a)
 	return pte_flags(a) & (_PAGE_PRESENT | _PAGE_PROTNONE);
 }
 
+static inline bool pte_upf(pte_t pte)
+{
+	return !pte_present(pte) && (pte_flags(pte) & _PAGE_UPF);
+}
+
+static inline pte_t pte_mkupf(void)
+{
+	return __pte(_PAGE_UPF);
+}
+
 #ifdef CONFIG_ARCH_HAS_PTE_DEVMAP
 static inline int pte_devmap(pte_t a)
 {

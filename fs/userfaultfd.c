@@ -38,22 +38,9 @@
 #include <asm/fpu/api.h>
 #include <asm/fpu/xstate.h>
 
-#include <linux/io.h>
-#include <linux/uffd_mmio.h>
-
-#ifndef iowrite64
-void iowrite64(u64 val, void __iomem *addr)
-{
-    iowrite32((u32)val, addr);
-    iowrite32((u32)(val >> 32), addr + 4);
-}
-#endif
-
 int sysctl_unprivileged_userfaultfd __read_mostly;
 
 static struct kmem_cache *userfaultfd_ctx_cachep __read_mostly;
-
-extern struct mmio_dev *global_uffd_mmio_dev;
 
 /*
  * Start with fault_pending_wqh and fault_wqh so they're more likely
@@ -92,8 +79,6 @@ struct userfaultfd_ctx {
 	atomic_t mmap_changing;
 	/* mm with one ore more vmas attached to this userfaultfd_ctx */
 	struct mm_struct *mm;
-
-	struct mmio_dev *dev;
 };
 
 // flag
@@ -362,7 +347,7 @@ static inline bool userfaultfd_must_wait(struct userfaultfd_ctx *ctx,
 	 * changes under us.  PTE markers should be handled the same as none
 	 * ptes here.
 	 */
-	if (pte_none_mostly(*pte))
+	if (pte_none_mostly(*pte) || pte_upf(*pte))
 		ret = true;
 	if (!pte_write(*pte) && (reason & VM_UFFD_WP))
 		ret = true;
@@ -518,11 +503,6 @@ vm_fault_t handle_userfault(struct vm_fault *vmf, unsigned long reason)
 	uwq.wq.private = current;
 	uwq.msg = userfault_msg(vmf->address, vmf->real_address, vmf->flags,
 				reason, ctx->features);
-
-	//printk(KERN_INFO "uffd_msg.event = %u\n", uwq.msg.event);
-	//printk(KERN_INFO "uffd_msg.pagefault.flags = 0x%llx\n", uwq.msg.arg.pagefault.flags);
-	//printk(KERN_INFO "uffd_msg.pagefault.address = 0x%llx\n", uwq.msg.arg.pagefault.address);
-	//printk(KERN_INFO "uffd_msg.pagefault.ptid = %u\n", uwq.msg.arg.pagefault.feat.ptid);
 
 	uwq.ctx = ctx;
 	uwq.waken = false;
@@ -1292,6 +1272,13 @@ static __always_inline int validate_range(struct mm_struct *mm,
 	return 0;
 }
 
+static int upf_stamp_pte(pte_t *pte, unsigned long addr, void *data)
+{
+	if (pte_none(*pte))
+		set_pte(pte, pte_mkupf());
+	return 0;
+}
+
 static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 				unsigned long arg)
 {
@@ -1333,6 +1320,8 @@ static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 #endif
 		vm_flags |= VM_UFFD_MINOR;
 	}
+	if (uffdio_register.mode & UFFDIO_REGISTER_MODE_MISSING_UPF)
+		vm_flags |= VM_UFFD_MISSING | VM_UFFD_MISSING_UPF;
 
 	ret = validate_range(mm, uffdio_register.range.start,
 			     uffdio_register.range.len);
@@ -1493,6 +1482,11 @@ static int userfaultfd_register(struct userfaultfd_ctx *ctx,
 		start = vma->vm_end;
 		vma = vma->vm_next;
 	} while (vma && vma->vm_start < end);
+
+	if (!ret && (uffdio_register.mode & UFFDIO_REGISTER_MODE_MISSING_UPF))
+		apply_to_page_range(mm, uffdio_register.range.start,
+				    uffdio_register.range.len, upf_stamp_pte, NULL);
+
 out_unlock:
 	mmap_write_unlock(mm);
 	mmput(mm);
@@ -1520,23 +1514,6 @@ out_unlock:
 		 */
 		if (put_user(ioctls_out, &user_uffdio_register->ioctls))
 			ret = -EFAULT;
-
-		if (!ret) {
-			if (!global_uffd_mmio_dev || !global_uffd_mmio_dev->mmio_base) {
-				printk(KERN_ERR "uffd: MMIO device not initialized\n");
-				ret = -ENODEV;
-				goto out;
-			}
-
-			iowrite64(uffdio_register.range.start,
-				  global_uffd_mmio_dev->mmio_base + 0);
-			iowrite64(uffdio_register.range.start + uffdio_register.range.len,
-				  global_uffd_mmio_dev->mmio_base + 8);
-
-			printk(KERN_INFO "uffd: MMIO passed range start=0x%llx end=0x%llx\n",
-			       (unsigned long long)uffdio_register.range.start,
-			       (unsigned long long)(uffdio_register.range.start + uffdio_register.range.len));
-		}
 	}
 out:
 	return ret;
@@ -2172,9 +2149,6 @@ SYSCALL_DEFINE1(userfaultfd, int, flags)
 	ctx->mm = current->mm;
 	/* prevent the mm struct to be freed */
 	mmgrab(ctx->mm);
-	//printk(KERN_INFO "Setting the MMIO device\n");
-	ctx->dev = global_uffd_mmio_dev;
-
 	fd = anon_inode_getfd_secure("[userfaultfd]", &userfaultfd_fops, ctx,
 			O_RDWR | (flags & UFFD_SHARED_FCNTL_FLAGS), NULL);
 	if (fd < 0) {

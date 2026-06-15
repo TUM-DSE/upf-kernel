@@ -278,6 +278,7 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_UFFD_MISSING	0x00000200	/* missing pages tracking */
 #define VM_PFNMAP	0x00000400	/* Page-ranges managed without "struct page", just pure PFN */
 #define VM_UFFD_WP	0x00001000	/* wrprotect pages tracking */
+#define VM_UFFD_MISSING_UPF 0x00000800	/* UPF: MISSING + PTE bit-58 stamping */
 
 #define VM_LOCKED	0x00002000
 #define VM_IO           0x00004000	/* Memory mapped I/O or similar */

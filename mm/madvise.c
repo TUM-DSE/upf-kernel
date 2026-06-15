@@ -785,10 +785,20 @@ static int madvise_free_single_vma(struct vm_area_struct *vma,
  * An interface that causes the system to free clean pages and flush
  * dirty pages is already available as msync(MS_INVALIDATE).
  */
+static int upf_restamp_pte(pte_t *pte, unsigned long addr, void *data)
+{
+	if (pte_none(*pte))
+		set_pte(pte, pte_mkupf());
+	return 0;
+}
+
 static long madvise_dontneed_single_vma(struct vm_area_struct *vma,
 					unsigned long start, unsigned long end)
 {
 	zap_page_range(vma, start, end - start);
+	if (vma->vm_flags & VM_UFFD_MISSING_UPF)
+		apply_to_page_range(vma->vm_mm, start, end - start,
+				    upf_restamp_pte, NULL);
 	return 0;
 }
 

@@ -1462,6 +1462,9 @@ again:
 			continue;
 		}
 
+		if (pte_upf(ptent))
+			continue;
+
 		entry = pte_to_swp_entry(ptent);
 		if (is_device_private_entry(entry) ||
 		    is_device_exclusive_entry(entry)) {
@@ -4919,8 +4922,11 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 			return do_fault(vmf);
 	}
 
-	if (!pte_present(vmf->orig_pte))
+	if (!pte_present(vmf->orig_pte)) {
+		if (pte_upf(vmf->orig_pte))
+			return handle_userfault(vmf, VM_UFFD_MISSING);
 		return do_swap_page(vmf);
+	}
 
 	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
 		return do_numa_page(vmf);
