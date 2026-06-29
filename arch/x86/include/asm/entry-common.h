@@ -58,8 +58,8 @@ static inline void arch_exit_to_user_mode_prepare(struct pt_regs *regs,
 	if (unlikely(ti_work & _TIF_NEED_FPU_LOAD))
 		switch_fpu_return();
 
-	if (cpu_feature_enabled(X86_FEATURE_UINTR))
-		switch_uintr_return();
+	/* gem5: X86_FEATURE_UINTR not in CPUID, call unconditionally */
+	switch_uintr_return();
 
 #ifdef CONFIG_COMPAT
 	/*
