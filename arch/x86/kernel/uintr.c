@@ -521,12 +521,14 @@ static bool uintr_is_receiver_active(struct uintr_upid_ctx *upid_ctx)
 
 static int do_uintr_register_sender(u64 uvec, struct uintr_upid_ctx *upid_ctx)
 {
-	pr_info("Entered do_uintr_register_sender\n");
 	struct uintr_uitt_entry *uitte = NULL;
 	struct uintr_uitt_ctx *uitt_ctx;
 	struct task_struct *t = current;
 	int entry;
 	int ret;
+	u64 val;
+
+	pr_info("Entered do_uintr_register_sender\n");
 
 	/*
 	 * Only a static check. Receiver could exit anytime after this check.
@@ -575,8 +577,6 @@ static int do_uintr_register_sender(u64 uvec, struct uintr_upid_ctx *upid_ctx)
 		uintr_set_sender_msrs(t);
 	}
 
-	u64 val;
-
 	rdmsrl(MSR_IA32_UINTR_TT, val);
 	pr_info("UINTR_TT after registering handler (UITT base) = 0x%llx\n", val);
 
@@ -590,12 +590,12 @@ static int do_uintr_register_sender(u64 uvec, struct uintr_upid_ctx *upid_ctx)
 }
 // wrapper of function above to expose
 int uintr_register_sender_wrapper(int uvecfd) {
-	printk(KERN_INFO "Entered register_sender\n");
-
-    struct uvecfd_ctx *uvecfd_ctx;
+	struct uvecfd_ctx *uvecfd_ctx;
 	struct file *uvec_f;
 	struct fd f;
 	int ret = 0;
+
+	printk(KERN_INFO "Entered register_sender\n");
 
 	f = fdget(uvecfd);
 	uvec_f = f.file;
@@ -773,8 +773,6 @@ SYSCALL_DEFINE1(uintr_ipi_fd, unsigned int, flags)
  */
 SYSCALL_DEFINE2(uintr_register_sender, int, uvecfd, unsigned int, flags)
 {
-	pr_info("Syscall entry point for uintr_register_sender\n");
-
 	//struct uintr_uitt_ctx *uitt_ctx;
 	//struct uintr_sender_info *s_info;
 	struct uvecfd_ctx *uvecfd_ctx;
@@ -782,6 +780,8 @@ SYSCALL_DEFINE2(uintr_register_sender, int, uvecfd, unsigned int, flags)
 	struct file *uvec_f;
 	struct fd f;
 	int ret = 0;
+
+	pr_info("Syscall entry point for uintr_register_sender\n");
 
 	//if (!cpu_feature_enabled(X86_FEATURE_UINTR))
 	//	return -ENOSYS;
@@ -1078,8 +1078,6 @@ static int do_uintr_register_handler(u64 handler, unsigned int flags)
 SYSCALL_DEFINE2(uintr_register_handler, u64 __user *, handler, unsigned int,
 		flags)
 {
-	pr_info(KERN_INFO "We do come Here\n");
-
 	int ret;
 
 	//if (!cpu_feature_enabled(X86_FEATURE_UINTR)) {
@@ -1101,7 +1099,6 @@ SYSCALL_DEFINE2(uintr_register_handler, u64 __user *, handler, unsigned int,
 		return -EFAULT;
 
 	ret = do_uintr_register_handler((u64)handler, flags);
-	pr_info(KERN_INFO "Wait why ret: %d\n", ret);
 	pr_debug("recv: register handler task=%d flags %d handler %lx ret %d\n",
 		 current->pid, flags, (unsigned long)handler, ret);
 
