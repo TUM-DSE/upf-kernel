@@ -20,7 +20,6 @@
 
 #include <asm/apic.h>
 #include <asm/fpu/api.h>
-extern void *get_xsave_addr(struct xregs_state *xsave, int xfeature_nr);
 #include <asm/irq_vectors.h>
 #include <asm/msr.h>
 #include <asm/msr-index.h>
@@ -944,6 +943,7 @@ static int do_uintr_unregister_handler(void)
 	xsave_wrmsrl(xstate, MSR_IA32_UINTR_HANDLER, 0);
 
 	upid_ctx = t->thread.upid_ctx;
+	upid_ctx->handler_addr = 0;
 	//upid_ctx->receiver_active = false;
 
 	t->thread.upid_activated = false;
@@ -1040,6 +1040,7 @@ static int do_uintr_register_handler(u64 handler, unsigned int flags)
 	upid->nc.nv = UINTR_NOTIFICATION_VECTOR;
 	upid->nc.ndst = cpu_to_ndst(cpu);
 
+	upid_ctx->handler_addr = handler;
 	xsave_wrmsrl(xstate, MSR_IA32_UINTR_HANDLER, handler);
 
 	xsave_wrmsrl(xstate, MSR_IA32_UINTR_PD, (u64)upid);
@@ -1466,30 +1467,15 @@ void switch_uintr_return(void)
 
 	/*
 	 * gem5: XRSTORS is unimplemented, so HANDLER/STACKADJUST are not
-	 * restored from the XSAVE buffer on context switch.  Read the buffer
-	 * directly (bypassing start_update_xsave_msrs which returns NULL when
-	 * TIF_NEED_FPU_LOAD=0) and wrmsrl them back into the CPU.
-	 *
-	 * Guard on handler!=0: when the buffer is stale (handler was set via
-	 * wrmsrl_safe while FPU was live and the XSAVE buffer hasn't been
-	 * refreshed yet), buffer has 0 and the CPU already has the correct
-	 * value — skip the wrmsrl so we don't clobber it.
-	 *
-	 * On real hardware XRSTORS already loaded these; the rdmsrl in
-	 * xsave_rdmsrl just reads back what XRSTORS wrote, and the wrmsrl
-	 * is a harmless no-op.
+	 * restored on context switch or CPU migration.  Write them directly
+	 * from the kernel-side cache in upid_ctx on every return to userspace.
+	 * On real hardware this is a harmless no-op (XRSTORS already loaded them).
 	 */
 	{
-		void *xstate = get_xsave_addr(
-			&current->thread.fpu.fpstate->regs.xsave, XFEATURE_UINTR);
-		if (xstate) {
-			u64 handler = 0, stackadjust = 0;
-			xsave_rdmsrl(xstate, MSR_IA32_UINTR_HANDLER, &handler);
-			if (handler) {
-				xsave_rdmsrl(xstate, MSR_IA32_UINTR_STACKADJUST, &stackadjust);
-				wrmsrl(MSR_IA32_UINTR_HANDLER, handler);
-				wrmsrl(MSR_IA32_UINTR_STACKADJUST, stackadjust);
-			}
+		u64 handler = current->thread.upid_ctx->handler_addr;
+		if (handler) {
+			wrmsrl(MSR_IA32_UINTR_HANDLER, handler);
+			wrmsrl(MSR_IA32_UINTR_STACKADJUST, OS_ABI_REDZONE);
 		}
 	}
 
