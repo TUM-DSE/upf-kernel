@@ -1041,6 +1041,8 @@ static int do_uintr_register_handler(u64 handler, unsigned int flags)
 	upid->nc.ndst = cpu_to_ndst(cpu);
 
 	upid_ctx->handler_addr = handler;
+	pr_info("uintr: register_handler: task=%d upid_ctx=%px handler_addr=%llx\n",
+		t->pid, upid_ctx, handler);
 	xsave_wrmsrl(xstate, MSR_IA32_UINTR_HANDLER, handler);
 
 	xsave_wrmsrl(xstate, MSR_IA32_UINTR_PD, (u64)upid);
@@ -1476,6 +1478,9 @@ void switch_uintr_return(void)
 		if (handler) {
 			wrmsrl(MSR_IA32_UINTR_HANDLER, handler);
 			wrmsrl(MSR_IA32_UINTR_STACKADJUST, OS_ABI_REDZONE);
+		} else {
+			pr_info("uintr: switch_uintr_return: handler_addr=0 for task=%d upid_ctx=%px\n",
+				current->pid, current->thread.upid_ctx);
 		}
 	}
 
