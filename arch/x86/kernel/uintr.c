@@ -20,7 +20,7 @@
 
 #include <asm/apic.h>
 #include <asm/fpu/api.h>
-#include "fpu/xstate.h"
+extern void *get_xsave_addr(struct xregs_state *xsave, int xfeature_nr);
 #include <asm/irq_vectors.h>
 #include <asm/msr.h>
 #include <asm/msr-index.h>
