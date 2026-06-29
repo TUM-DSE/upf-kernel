@@ -4910,6 +4910,18 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 		 */
 		barrier();
 		if (pte_none(vmf->orig_pte)) {
+			if (vma_is_anonymous(vmf->vma) &&
+			    (vmf->vma->vm_flags & VM_UFFD_MISSING_UPF)) {
+				vmf->ptl = pte_lockptr(vmf->vma->vm_mm, vmf->pmd);
+				spin_lock(vmf->ptl);
+				if (pte_none(*vmf->pte))
+					set_pte_at(vmf->vma->vm_mm, vmf->address,
+						   vmf->pte, pte_mkupf());
+				spin_unlock(vmf->ptl);
+				pte_unmap(vmf->pte);
+				vmf->pte = NULL;
+				return VM_FAULT_NOPAGE;
+			}
 			pte_unmap(vmf->pte);
 			vmf->pte = NULL;
 		}

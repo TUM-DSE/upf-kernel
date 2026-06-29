@@ -20,6 +20,7 @@
 
 #include <asm/apic.h>
 #include <asm/fpu/api.h>
+#include "fpu/xstate.h"
 #include <asm/irq_vectors.h>
 #include <asm/msr.h>
 #include <asm/msr-index.h>
@@ -1464,6 +1465,35 @@ void switch_uintr_return(void)
 	if (!(misc_msr & GENMASK_ULL(39, 32))) {
 		misc_msr |= (u64)UINTR_NOTIFICATION_VECTOR << 32;
 		wrmsrl(MSR_IA32_UINTR_MISC, misc_msr);
+	}
+
+	/*
+	 * gem5: XRSTORS is unimplemented, so HANDLER/STACKADJUST are not
+	 * restored from the XSAVE buffer on context switch.  Read the buffer
+	 * directly (bypassing start_update_xsave_msrs which returns NULL when
+	 * TIF_NEED_FPU_LOAD=0) and wrmsrl them back into the CPU.
+	 *
+	 * Guard on handler!=0: when the buffer is stale (handler was set via
+	 * wrmsrl_safe while FPU was live and the XSAVE buffer hasn't been
+	 * refreshed yet), buffer has 0 and the CPU already has the correct
+	 * value — skip the wrmsrl so we don't clobber it.
+	 *
+	 * On real hardware XRSTORS already loaded these; the rdmsrl in
+	 * xsave_rdmsrl just reads back what XRSTORS wrote, and the wrmsrl
+	 * is a harmless no-op.
+	 */
+	{
+		void *xstate = get_xsave_addr(
+			&current->thread.fpu.fpstate->regs.xsave, XFEATURE_UINTR);
+		if (xstate) {
+			u64 handler = 0, stackadjust = 0;
+			xsave_rdmsrl(xstate, MSR_IA32_UINTR_HANDLER, &handler);
+			if (handler) {
+				xsave_rdmsrl(xstate, MSR_IA32_UINTR_STACKADJUST, &stackadjust);
+				wrmsrl(MSR_IA32_UINTR_HANDLER, handler);
+				wrmsrl(MSR_IA32_UINTR_STACKADJUST, stackadjust);
+			}
+		}
 	}
 
 	/*
