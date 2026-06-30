@@ -1460,10 +1460,20 @@ void switch_uintr_return(void)
 	 */
 	WARN_ON_ONCE(test_thread_flag(TIF_NEED_FPU_LOAD));
 
-	/* Modify only the relevant bits of the MISC MSR */
+	/*
+	 * Restore UINV (bits 39:32) and UIF (bit 63) in the MISC MSR.
+	 * XSAVES clears UINV; XRSTORS would restore both, but in gem5 neither
+	 * xsave nor xrstor work reliably.  After a context switch the MSR may
+	 * contain a stale value from the previous thread (e.g. UIF=0 from a
+	 * kernel task or from another thread that was inside its handler).
+	 * UIF must be 1 for UserPageFault delivery to proceed; without it
+	 * gem5's commit stage demotes the fault to a regular PageFault which
+	 * blocks the thread indefinitely.
+	 */
 	rdmsrl(MSR_IA32_UINTR_MISC, misc_msr);
-	if (!(misc_msr & GENMASK_ULL(39, 32))) {
+	if (!(misc_msr & GENMASK_ULL(39, 32)) || !(misc_msr & BIT_ULL(63))) {
 		misc_msr |= (u64)UINTR_NOTIFICATION_VECTOR << 32;
+		misc_msr |= BIT_ULL(63);
 		wrmsrl(MSR_IA32_UINTR_MISC, misc_msr);
 	}
 
