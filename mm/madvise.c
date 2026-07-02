@@ -1186,6 +1186,7 @@ process_madvise_behavior_valid(int behavior)
 	case MADV_COLD:
 	case MADV_PAGEOUT:
 	case MADV_WILLNEED:
+	case MADV_DONTNEED:
 		return true;
 	default:
 		return false;
