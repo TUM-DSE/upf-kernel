@@ -1194,6 +1194,75 @@ process_madvise_behavior_valid(int behavior)
 }
 
 /*
+ * Batched MADV_DONTNEED: zap all iovec ranges under a single mmu_gather so
+ * the TLB shootdown happens once per call instead of once per range.  PTE
+ * clearing and UPF restamping are synchronous as in madvise_dontneed_single_vma;
+ * only the flush and page freeing are deferred to tlb_finish_mmu().
+ * Aborts with a partial byte count if a vma needs the userfaultfd remove
+ * event, which would drop mmap_lock mid-batch.
+ */
+static ssize_t process_madvise_dontneed_batched(struct mm_struct *mm,
+						struct iov_iter *iter)
+{
+	struct mmu_gather tlb;
+	ssize_t ret = 0;
+
+	lru_add_drain();
+	tlb_gather_mmu(&tlb, mm);
+	update_hiwater_rss(mm);
+	mmap_read_lock(mm);
+
+	while (iov_iter_count(iter)) {
+		struct iovec iovec = iov_iter_iovec(iter);
+		unsigned long start, end;
+		struct vm_area_struct *vma;
+
+		start = untagged_addr((unsigned long)iovec.iov_base);
+		end = start + PAGE_ALIGN(iovec.iov_len);
+		if (!PAGE_ALIGNED(start) || end < start) {
+			ret = -EINVAL;
+			break;
+		}
+
+		if (end > start) {
+			vma = find_vma(mm, start);
+			if (!vma || start < vma->vm_start) {
+				ret = -ENOMEM;
+				break;
+			}
+
+			for (; vma && vma->vm_start < end; vma = vma->vm_next) {
+				unsigned long s = max(start, vma->vm_start);
+				unsigned long e = min(end, vma->vm_end);
+
+				if (!madvise_dontneed_free_valid_vma(vma, s, &e,
+								MADV_DONTNEED)) {
+					ret = -EINVAL;
+					goto out;
+				}
+				if (!userfaultfd_remove(vma, s, e)) {
+					/* mmap_lock was dropped; abort batch. */
+					mmap_read_lock(mm);
+					ret = -EBUSY;
+					goto out;
+				}
+				zap_page_range_batched(&tlb, vma, s, e - s);
+				if (vma->vm_flags & VM_UFFD_MISSING_UPF)
+					apply_to_page_range(mm, s, e - s,
+							    upf_restamp_pte,
+							    NULL);
+			}
+		}
+
+		iov_iter_advance(iter, iovec.iov_len);
+	}
+out:
+	mmap_read_unlock(mm);
+	tlb_finish_mmu(&tlb);
+	return ret;
+}
+
+/*
  * Walk the vmas in range [start,end), and call the visit function on each one.
  * The visit function will get start and end parameters that cover the overlap
  * between the current vma and the original range.  Any unmapped regions in the
@@ -1487,13 +1556,17 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 
 	total_len = iov_iter_count(&iter);
 
-	while (iov_iter_count(&iter)) {
-		iovec = iov_iter_iovec(&iter);
-		ret = do_madvise(mm, (unsigned long)iovec.iov_base,
-					iovec.iov_len, behavior);
-		if (ret < 0)
-			break;
-		iov_iter_advance(&iter, iovec.iov_len);
+	if (behavior == MADV_DONTNEED) {
+		ret = process_madvise_dontneed_batched(mm, &iter);
+	} else {
+		while (iov_iter_count(&iter)) {
+			iovec = iov_iter_iovec(&iter);
+			ret = do_madvise(mm, (unsigned long)iovec.iov_base,
+						iovec.iov_len, behavior);
+			if (ret < 0)
+				break;
+			iov_iter_advance(&iter, iovec.iov_len);
+		}
 	}
 
 	ret = (total_len - iov_iter_count(&iter)) ? : ret;

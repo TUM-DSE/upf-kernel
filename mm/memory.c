@@ -1762,6 +1762,30 @@ void zap_page_range(struct vm_area_struct *vma, unsigned long start,
 }
 
 /**
+ * zap_page_range_batched - remove user pages in a given range, deferring the
+ * TLB flush to a caller-owned mmu_gather
+ * @tlb: the mmu_gather accumulating the flush; caller runs tlb_finish_mmu()
+ * @vma: vm_area_struct holding the applicable pages
+ * @address: starting address of pages to zap
+ * @size: number of bytes to zap
+ *
+ * Lets many scattered ranges share a single TLB shootdown.  The caller is
+ * responsible for lru_add_drain(), update_hiwater_rss() and tlb_finish_mmu().
+ * The range must fit into one VMA.
+ */
+void zap_page_range_batched(struct mmu_gather *tlb, struct vm_area_struct *vma,
+		unsigned long address, unsigned long size)
+{
+	struct mmu_notifier_range range;
+
+	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma, vma->vm_mm,
+				address, address + size);
+	mmu_notifier_invalidate_range_start(&range);
+	unmap_single_vma(tlb, vma, address, range.end, NULL);
+	mmu_notifier_invalidate_range_end(&range);
+}
+
+/**
  * zap_page_range_single - remove user pages in a given range
  * @vma: vm_area_struct holding the applicable pages
  * @address: starting address of pages to zap
